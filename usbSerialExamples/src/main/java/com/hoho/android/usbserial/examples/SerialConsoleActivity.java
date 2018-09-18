@@ -24,13 +24,19 @@ package com.hoho.android.usbserial.examples;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.AssetManager;
 import android.graphics.drawable.Drawable;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.provider.MediaStore;
 import android.util.Log;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -42,6 +48,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
+import android.widget.VideoView;
 
 import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.util.GeneratedMessages;
@@ -55,6 +62,7 @@ import com.hoho.android.usbserial.util.*;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
@@ -102,23 +110,28 @@ public class SerialConsoleActivity extends Activity {
     private byte VehicleId = 2; // 고정
     private Button vt_btn;
     private Button vr_btn;
-    public ImageView imageView;
+    public ImageView consoleImage;
+    public VideoView consoleVideo;
+    MediaPlayer mplaer;
+
 
     private TextView vt_state;
     private boolean idleActive;
-    private UVLinkPacket receivedPacket;
     int IdleUpdateRateMs = 200;
     byte sequenceNumber = 0;
+    int count = 1;
 
     String errormsg;
     String message;
 
-    public int vtidstate=1;
+    public int vtidstate = 0;
+    public int vr_state = 0;
+    public int output_mode = 0;
+    public int stopPosition;
 
     private static CSEBase csebase = new CSEBase();
-    private static AE ae = new AE();
-    private String ServiceAEName = "VR1";
     private EditText EditText_Address = null;
+    private EditText vt_edit = null;
     private String Mobius_Address ="";
 
     /* Response callback Interface */
@@ -144,15 +157,49 @@ public class SerialConsoleActivity extends Activity {
                 SerialConsoleActivity.this.runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        //SerialConsoleActivity.this.updateReceivedData(data);
-                        //byte[] syncData = syncStream(data);
-                        updateReceivedData(data);
-                        readText(1);
-                        }
+                        int id = byte2int(data);
+                        //updateReceivedData(data);
+                        //readText(id);
+                        //viewImage(id);
+                        //playVideo(id);
+                        processData(id);
+
+                        vt_state.setText("VT" + id);
+                    }
                 });
             }
 
     };
+
+    public static int byte2int(byte[] src) {
+        int s1 = 0 & 0xFF;
+        int s2 = 0 & 0xFF;
+        int s3 = src[2] & 0xFF;
+        int s4 = src[3] & 0xFF;
+
+        return ((s1 << 24) + (s2 << 16) + (s3 << 8) + (s4 << 0));
+    }
+
+    public class count_video implements Runnable {
+        @Override
+        public void run() {
+            while (true)
+            {
+                if(output_mode == 2) {
+                    try {
+                        if (count == 0) {
+                            //mplaer.pause();
+                        } else {
+                            count--;
+                            Thread.sleep(1000);
+                        }
+                    } catch (Exception e) {
+                        Toast.makeText(getApplicationContext(), "thread:" + e, Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }
+        }
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -166,6 +213,16 @@ public class SerialConsoleActivity extends Activity {
         vt_btn = (Button) findViewById(R.id.vt_id_btn);
         btnAddr_Set = (ToggleButton) findViewById(R.id.toggleButton_Addr);
         EditText_Address = (EditText) findViewById(R.id.editText);
+        vt_edit = (EditText) findViewById(R.id.vt_edit);
+        consoleImage = (ImageView)findViewById(R.id.consoleImage);
+        consoleVideo = (VideoView) findViewById(R.id.consoleVideo);
+
+        consoleVideo.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                mplaer = mp;
+            }
+        });
 
         //imageView = (ImageView)findViewById(R.id.image);
         btnAddr_Set.setFocusable(true);
@@ -185,30 +242,67 @@ public class SerialConsoleActivity extends Activity {
         vt_btn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if(vtidstate >= 30)
-                    vtidstate = 1;
-                Toast.makeText(getApplicationContext(), "Click", Toast.LENGTH_SHORT).show();
-                String hex;
-                if(vtidstate < 16)
-                    hex = "000" + Integer.toHexString( vtidstate );
-                else
-                    hex = "00" + Integer.toHexString( vtidstate );
-                //String data = "{\"playerID\":1234,\"name\":\"Test\",\"itemList\":[{\"itemID\":1,\"name\":\"Axe\",\"atk\":12,\"def\":0},{\"itemID\":2,\"name\":\"Sword\",\"atk\":5,\"def\":5},{\"itemID\":3,\"name\":\"Shield\",\"atk\":0,\"def\":10}]}";
-                String data = "{\"type\":\"0001\",\"id\":\""+ hex +"\",\"data\":\"0102030405060708090a0b0c0d0f\"}";
-                RequestVT req = new RequestVT(data);
-                req.setReceiver(new IReceived() {
-                    public void getResponseBody(final String msg) {
-                        handler.post(new Runnable() {
-                            public void run() {
-                                Toast.makeText(getApplicationContext(), "Send Message to VT", Toast.LENGTH_SHORT).show();
+                if(vt_edit.getText().toString().equals("")) {
+                    Toast.makeText(getApplicationContext(), "Please Insert Number from 1 to 30", Toast.LENGTH_SHORT).show();
+                } else {
+//                    if (vtidstate >= 3)
+//                        vtidstate = 0;
+//                    vtidstate++;
+//                    //Toast.makeText(getApplicationContext(), "Click", Toast.LENGTH_SHORT).show();
+//                    String hex;
+//                    if (vtidstate < 16)
+//                        hex = "000" + Integer.toHexString(vtidstate);
+//                    else
+//                        hex = "00" + Integer.toHexString(vtidstate);
+//                    String data = "{\"type\":\"0001\",\"id\":\"" + hex + "\",\"data\":\"0102030405060708090a0b0c0d0f\"}";
+//                    RequestVT req = new RequestVT(data);
+//                    req.setReceiver(new IReceived() {
+//                        public void getResponseBody(final String msg) {
+//                            handler.post(new Runnable() {
+//                                public void run() {
+//                                    Toast.makeText(getApplicationContext(), "Send Message to VT", Toast.LENGTH_SHORT).show();
+//                                }
+//                            });
+//                        }
+//                    });
+//                    req.start();
+//                    Toast.makeText(getApplicationContext(), csebase.getServiceUrl(), Toast.LENGTH_SHORT).show();
+                    try {
+                        //Toast.makeText(getApplicationContext(), vt_edit.getText().toString(), Toast.LENGTH_SHORT).show();
+                        vtidstate = Integer.parseInt(vt_edit.getText().toString());
+                        String hex;
+                        if (vtidstate < 16)
+                            hex = "000" + Integer.toHexString(vtidstate);
+                        else
+                            hex = "00" + Integer.toHexString(vtidstate);
+                        String data = "{\"type\":\"0001\",\"id\":\"" + hex + "\",\"data\":\"0102030405060708090a0b0c0d0f\"}";
+                        RequestVT req = new RequestVT(data);
+                        req.setReceiver(new IReceived() {
+                            public void getResponseBody(final String msg) {
+                                handler.post(new Runnable() {
+                                    public void run() {
+                                        Toast.makeText(getApplicationContext(), "Send Message to VT", Toast.LENGTH_SHORT).show();
+                                    }
+                                });
                             }
                         });
+                        req.start();
+                        Toast.makeText(getApplicationContext(), csebase.getServiceUrl(), Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        Toast.makeText(getApplicationContext(), "e:"+e, Toast.LENGTH_LONG).show();
                     }
-                });
-                req.start();
-                vt_state.setText("VT" + vtidstate);
-                vtidstate++;
-                Toast.makeText(getApplicationContext(), csebase.getServiceUrl(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        vr_btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if(output_mode >= 2)
+                    output_mode = -1;
+                output_mode++;
+                enableOutput_mode();
+
             }
         });
     }
@@ -253,7 +347,7 @@ public class SerialConsoleActivity extends Activity {
                 sPort.open(connection);
                 sPort.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
 
-                showStatus(mDumpTextView, "CD  - Carrier Detect", sPort.getCD());
+                //showStatus(mDumpTextView, "CD  - Carrier Detect", sPort.getCD());
 
             } catch (IOException e) {
                 Log.e(TAG, "Error setting up device: " + e.getMessage(), e);
@@ -269,7 +363,6 @@ public class SerialConsoleActivity extends Activity {
             mTitleTextView.setText("Serial device: " + sPort.getClass().getSimpleName());
         }
         onDeviceStateChange();
-        //BeginIdleLoop();
     }
 
     private void stopIoManager() {
@@ -410,6 +503,7 @@ public class SerialConsoleActivity extends Activity {
 
     private void updateReceivedData(byte[] data) {
         final String message = "Read : " + data.length + " bytes :\n" + HexDump.toHexString(data)+ "\n";
+        //Toast.makeText(getApplicationContext(), "Data:" + message, Toast.LENGTH_LONG).show();
         mDumpTextView.append(message);
         mScrollView.smoothScrollTo(0, mDumpTextView.getBottom());
     }
@@ -486,19 +580,102 @@ public class SerialConsoleActivity extends Activity {
         context.startActivity(intent);
     }
 
+    public void enableOutput_mode() {
+        switch (output_mode) {
+            case 0:
+                //텍스트 실행
+                mScrollView.setVisibility(View.VISIBLE);
+                consoleVideo.setVisibility(View.INVISIBLE);
+                consoleImage.setVisibility(View.INVISIBLE);
+                vr_btn.setText("Text");
+                break;
+            case 1:
+                mScrollView.setVisibility(View.INVISIBLE);
+                consoleVideo.setVisibility(View.INVISIBLE);
+                consoleImage.setVisibility(View.VISIBLE);
+                vr_btn.setText("Image");
+                //이미지 실행
+                break;
+            case 2:
+                mScrollView.setVisibility(View.INVISIBLE);
+                consoleVideo.setVisibility(View.VISIBLE);
+                consoleImage.setVisibility(View.INVISIBLE);
+                vr_btn.setText("Video");
+                //동영상 실행
+                break;
+        }
+    }
+
+    public void processData(int rid) {
+        //초기상태에서 처음으로 패킷을 받을 경우
+        //Toast.makeText(getApplicationContext(), "rid:" + rid + " vr_state:" + vr_state + " mode:" + output_mode, Toast.LENGTH_SHORT).show();
+        if(vr_state == 0) {
+            try {
+                mExecutor.submit(new count_video());
+                vr_state = rid;
+                playVideo(rid);
+            } catch (Exception e) {
+                Toast.makeText(getApplicationContext(), "e:" + e, Toast.LENGTH_SHORT).show();
+            }
+            // 다른 id의 패킷을 받을 경우
+        } else    if(vr_state != rid) {
+            vr_state = rid;
+            switch (output_mode) {
+                case 0:
+                    readText(rid);
+                    //텍스트 실행
+                    break;
+                case 1:
+                    viewImage(rid);
+                    //이미지 실행
+                    break;
+                case 2:
+                    //동영상 실행
+                    playVideo(rid);
+                    break;
+
+
+            }
+        }
+        else {
+                vr_state = rid;
+                switch (output_mode) {
+                    case 0:
+                        //텍스트 실행
+                        readText(rid);
+                        break;
+                    case 1:
+                        //이미지 실행
+                        viewImage(rid);
+                        break;
+                    case 2:
+                        //Toast.makeText(getApplicationContext(), "come" , Toast.LENGTH_SHORT).show();
+                        try {
+                            count = 1;
+                            mplaer.start();
+                        } catch (Exception e) {
+                            Toast.makeText(getApplicationContext(), "e3:" + e, Toast.LENGTH_SHORT).show();
+                            //playVideo(rid);
+                        }
+                        break;
+                }
+        }
+    }
+
+    public void viewImage(int id) {
+        try {
+            Uri path = Uri.parse("android.resource://com.hoho.android.usbserial.examples/raw/image_vt" + id);
+            consoleImage.setImageURI(path);
+        } catch (Exception e) {
+            Toast.makeText(getApplicationContext(), "ImageError:"+e, Toast.LENGTH_LONG).show();
+        }
+    }
+
     public void readText(int id) {
         try{
 
-            // getResources().openRawResource()로 raw 폴더의 원본 파일을 가져온다.
-            // txt 파일을 InpuStream에 넣는다. (open 한다)
-            InputStream in = getResources().openRawResource(R.raw.vt1);
-
-            if(id == 1)
-                in = getResources().openRawResource(R.raw.vt1);
-            else if(id==2)
-                in = getResources().openRawResource(R.raw.vt2);
-            else if(id==3)
-                in = getResources().openRawResource(R.raw.vt3);
+            Uri path = Uri.parse("android.resource://com.hoho.android.usbserial.examples/raw/text_vt" + id);
+            InputStream in = getContentResolver().openInputStream(path);
 
             if(in != null){
 
@@ -514,9 +691,7 @@ public class SerialConsoleActivity extends Activity {
 
                 in.close();
 
-                // id : textView01 TextView를 불러와서
-                //메모장에서 읽어온 문자열을 등록한다.
-                mDumpTextView.append(sb.toString());
+                mDumpTextView.setText(sb.toString());
                 mScrollView.smoothScrollTo(0, mDumpTextView.getBottom());
             }
 
@@ -525,125 +700,18 @@ public class SerialConsoleActivity extends Activity {
         }
     }
 
-    /* AE Create for Androdi AE */
-    public void GetAEInfo() {
-
-        Mobius_Address = EditText_Address.getText().toString();
-
-        csebase.setInfo(Mobius_Address,"7579","Mobius","1883");
-
-        //csebase.setInfo("203.253.128.151","7579","Mobius","1883");
-        // AE Create for Android AE
-        ae.setAppName("usb-vr");
-        aeCreateRequest aeCreate = new aeCreateRequest();
-        aeCreate.setReceiver(new IReceived() {
-            public void getResponseBody(final String msg) {
-                handler.post(new Runnable() {
-                    public void run() {
-                        Log.d(TAG, "** AE Create ResponseCode[" + msg +"]");
-                        if( Integer.parseInt(msg) == 201 ){
-                            //MQTT_Req_Topic = "/oneM2M/req/Mobius2/"+ae.getAEid()+"_sub"+"/#";
-                            //MQTT_Resp_Topic = "/oneM2M/resp/Mobius2/"+ae.getAEid()+"_sub"+"/json";
-                            //Log.d(TAG, "ReqTopic["+ MQTT_Req_Topic+"]");
-                            //Log.d(TAG, "ResTopic["+ MQTT_Resp_Topic+"]");
-                        }
-                        else { // If AE is Exist , GET AEID
-                            aeRetrieveRequest aeRetrive = new aeRetrieveRequest();
-                            aeRetrive.setReceiver(new IReceived() {
-                                public void getResponseBody(final String resmsg) {
-                                    handler.post(new Runnable() {
-                                        public void run() {
-                                            //Log.d(TAG, "** AE Retrive ResponseCode[" + resmsg +"]");
-                                            //MQTT_Req_Topic = "/oneM2M/req/Mobius2/"+ae.getAEid()+"_sub"+"/#";
-                                            //MQTT_Resp_Topic = "/oneM2M/resp/Mobius2/"+ae.getAEid()+"_sub"+"/json";
-                                            //Log.d(TAG, "ReqTopic["+ MQTT_Req_Topic+"]");
-                                            //Log.d(TAG, "ResTopic["+ MQTT_Resp_Topic+"]");
-                                        }
-                                    });
-                                }
-                            });
-                            aeRetrive.start();
-                        }
-                    }
-                });
-            }
-        });
-        aeCreate.start();
-    }
-
-    /* Request AE Creation */
-    class aeCreateRequest extends Thread {
-        private final Logger LOG = Logger.getLogger(aeCreateRequest.class.getName());
-        String TAG = aeCreateRequest.class.getName();
-        private IReceived receiver;
-        int responseCode=0;
-        public ApplicationEntityObject applicationEntity;
-        public void setReceiver(IReceived hanlder) { this.receiver = hanlder; }
-        public aeCreateRequest(){
-            applicationEntity = new ApplicationEntityObject();
-            applicationEntity.setResourceName(ae.getappName());
-        }
-        @Override
-        public void run() {
-            try {
-
-                String sb = csebase.getServiceUrl();
-                URL mUrl = new URL(sb);
-
-                HttpURLConnection conn = (HttpURLConnection) mUrl.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setDoInput(true);
-                conn.setDoOutput(true);
-                conn.setUseCaches(false);
-                conn.setInstanceFollowRedirects(false);
-
-                conn.setRequestProperty("Content-Type", "application/vnd.onem2m-res+xml;ty=2");
-                conn.setRequestProperty("Accept", "application/xml");
-                conn.setRequestProperty("locale", "ko");
-                conn.setRequestProperty("X-M2M-Origin", "Mobius");
-                conn.setRequestProperty("X-M2M-RI", "12345");
-                conn.setRequestProperty("X-M2M-NM", "Mobius" );
-
-                String reqXml = applicationEntity.makeXML();
-                conn.setRequestProperty("Content-Length", String.valueOf(reqXml.length()));
-
-                DataOutputStream dos = new DataOutputStream(conn.getOutputStream());
-                dos.write(reqXml.getBytes());
-                dos.flush();
-                dos.close();
-
-                responseCode = conn.getResponseCode();
-
-                BufferedReader in = null;
-                String aei = "";
-                if (responseCode == 201) {
-                    // Get AEID from Response Data
-                    in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-
-                    String resp = "";
-                    String strLine;
-                    while ((strLine = in.readLine()) != null) {
-                        resp += strLine;
-                    }
-
-                    ParseElementXml pxml = new ParseElementXml();
-                    aei = "Mobius";
-
-                    Log.d(TAG, "Create Get AEID[" + aei + "]");
-                    in.close();
-                }
-                if (responseCode != 0) {
-                    receiver.getResponseBody( Integer.toString(responseCode) );
-                }
-                conn.disconnect();
-            } catch (Exception exp) {
-                LOG.log(Level.SEVERE, exp.getMessage());
-            }
-
+    public void playVideo(int id) {
+        try {
+            Uri path = Uri.parse("android.resource://com.hoho.android.usbserial.examples/raw/video_vt" + id);
+            consoleVideo.setVideoURI(path);
+            consoleVideo.requestFocus();
+            consoleVideo.start();
+        } catch (Exception e) {
+            Toast.makeText(getApplicationContext(), "play:" + e , Toast.LENGTH_LONG).show();
         }
     }
 
-    /* Request Control LED */
+    /* Request VT ID change message */
     class RequestVT extends Thread {
         private final Logger LOG = Logger.getLogger(RequestVT.class.getName());
         private IReceived receiver;
@@ -701,65 +769,6 @@ public class SerialConsoleActivity extends Activity {
             }
         }
     }
-   /* Retrieve AE-ID */
-    class aeRetrieveRequest extends Thread {
-        private final Logger LOG = Logger.getLogger(aeCreateRequest.class.getName());
-        private IReceived receiver;
-        int responseCode=0;
-
-        public aeRetrieveRequest() {
-        }
-        public void setReceiver(IReceived hanlder) {
-            this.receiver = hanlder;
-        }
-
-        @Override
-        public void run() {
-            try {
-                String sb = csebase.getServiceUrl()+"/"+ ae.getappName();
-                URL mUrl = new URL(sb);
-
-                HttpURLConnection conn = (HttpURLConnection) mUrl.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setDoInput(true);
-                conn.setDoOutput(false);
-
-                conn.setRequestProperty("Accept", "application/xml");
-                conn.setRequestProperty("X-M2M-RI", "12345");
-                conn.setRequestProperty("X-M2M-Origin", "Sandoroid");
-                conn.setRequestProperty("nmtype", "short");
-                conn.connect();
-
-                responseCode = conn.getResponseCode();
-
-                BufferedReader in = null;
-                String aei = "";
-                if (responseCode == 200) {
-                    // Get AEID from Response Data
-                    in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-
-                    String resp = "";
-                    String strLine;
-                    while ((strLine = in.readLine()) != null) {
-                        resp += strLine;
-                    }
-
-                    ParseElementXml pxml = new ParseElementXml();
-                    aei = pxml.GetElementXml(resp, "aei");
-                    ae.setAEid( aei );
-                    //Log.d(TAG, "Retrieve Get AEID[" + aei + "]");
-                    in.close();
-                }
-                if (responseCode != 0) {
-                    receiver.getResponseBody( Integer.toString(responseCode) );
-                }
-                conn.disconnect();
-            } catch (Exception exp) {
-                LOG.log(Level.SEVERE, exp.getMessage());
-            }
-        }
-    }
-
 
 }
 

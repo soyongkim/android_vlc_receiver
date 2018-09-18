@@ -97,8 +97,6 @@ public class DeviceListActivity extends Activity {
         mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
         mProgressBarTitle = (TextView) findViewById(R.id.progressBarTitle);
 
-        Toast.makeText(getApplicationContext(), "File:" +  Environment.getDataDirectory().getAbsolutePath(), Toast.LENGTH_LONG).show();
-
         mAdapter = new ArrayAdapter<UsbSerialPort>(this,
                 android.R.layout.simple_expandable_list_item_2, mEntries) {
             @Override
