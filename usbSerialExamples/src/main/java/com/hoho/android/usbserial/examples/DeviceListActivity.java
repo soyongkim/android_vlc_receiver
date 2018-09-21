@@ -48,6 +48,7 @@ import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
 import com.hoho.android.usbserial.util.HexDump;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -96,6 +97,15 @@ public class DeviceListActivity extends Activity {
         mListView = (ListView) findViewById(R.id.deviceList);
         mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
         mProgressBarTitle = (TextView) findViewById(R.id.progressBarTitle);
+
+
+        String path = Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download";
+        String path2 = Environment.DIRECTORY_DOWNLOADS;
+        //Toast.makeText(getApplicationContext(), path + " " + path2, Toast.LENGTH_LONG).show();
+//        File dir = new File(path);
+//        if(!dir.exists()) {
+//            dir.mkdir();
+//        }
 
         mAdapter = new ArrayAdapter<UsbSerialPort>(this,
                 android.R.layout.simple_expandable_list_item_2, mEntries) {
