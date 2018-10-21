@@ -167,6 +167,7 @@ public class SerialConsoleActivity extends Activity {
 
                         gid = byte2intId(data);
                         gtype = byte2intType(data);
+                        //gtype = 0;
                         rcv_Id.setText(String.valueOf(gid));
                         switch (gtype) {
                             case 0:
@@ -193,6 +194,7 @@ public class SerialConsoleActivity extends Activity {
                         enableOutput_mode();
                         //updateReceivedData(data);
                         processData();
+                        //updateReceivedData(data);
 
                         task = new count_video_task();
                         timer.schedule(task, 1000);
@@ -223,7 +225,6 @@ public class SerialConsoleActivity extends Activity {
     public class count_video_task extends TimerTask {
         @Override
         public void run() {
-                if(output_mode == 2) {
                     (SerialConsoleActivity.this).runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
@@ -235,7 +236,6 @@ public class SerialConsoleActivity extends Activity {
                                 }
                             }
                         });
-            }
         }
     }
 
@@ -303,7 +303,6 @@ public class SerialConsoleActivity extends Activity {
             }
         });
     }
-
 
     @Override
     protected void onPause() {
